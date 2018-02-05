@@ -180,6 +180,7 @@ pipeline {
             echo 'Running Docker tests'
             PowerShellWrapper('& ".\\scripts\\linux_containers_on_windows\\run_docker_tests.ps1 "${env:GOPATH_BUILD_DIR}" "${env:DOCKER_TESTS_GIT_REPO}" "${env:DOCKER_TESTS_GIT_BRANCH}" "${env:SMB_SHARE_PATH}" "${env:USERNAME}" "${env:PASSWORD}" "${env:DOCKER_CLIENT_PATH}"')
             echo 'Finished running Docker tests'
+            stash includes: 'artifacts\\*', name: 'artifacts'
           }
         }
         post {
@@ -192,5 +193,20 @@ pipeline {
           }
         }
       }
+      stage('Publish artifacts') {
+        agent {
+          node {
+            label 'lis-f2334'
+          }
+        }
+        steps {
+          dir("artifacts") {
+            unstash "artifacts"
+          }
+            withCredentials(bindings: [string(credentialsId: 'MS_RD_SHARE_PATH', variable: 'MS_RD_SHARE_PATH')]) {
+              PowerShellWrapper('& ".\\scripts\\linux_containers_on_windows\\copy_artifacts.ps1 -SharedStoragePath ${env:MS_RD_SHARE_PATH} -Location "artifacts" -Destination "${env:MS_RD_SHARE_PATH}/(Get-Date -UFormat \\"%Y-%m-%d\\")${env:BUILD_NUMBER}"')
+            }
+        }
+      }
     }
-  }
+}

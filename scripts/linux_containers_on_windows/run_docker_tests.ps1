@@ -84,27 +84,32 @@ function Start-DockerTests {
 function Copy-Artifacts {
     Param(
         [Parameter(Mandatory=$true)]
-        [string]$artifact_path
+        [string]$artifact_path,
+        [Parameter(Mandatory=$true)]
+        [string]$destination
     )
 
-    if (Test-Path "$LINUX_CONTAINERS_PATH" ) { 
-        Get-ChildItem -Path "$LINUX_CONTAINERS_PATH" -Include *.* -File -Recurse | foreach { $_.Delete()}
+    if (Test-Path $destination) { 
+        Get-ChildItem -Path $destination -Include *.* -File -Recurse | foreach { $_.Delete()}
+    } else {
+        Write-Host "Directory $destination does not exist, we try to create it."
+        New-Item $destination -ItemType Directory -ErrorAction SilentlyContinue
     }
 
     cd $artifact_path
     $initrd_root_dir = Get-ChildItem -Directory | Where-Object {$_.Name.contains("kernel")} | sort -Descending -Property CreationTime | select -first 1
-    Copy-Item "$initrd_root_dir\initrd_artifact\initrd.img" $LINUX_CONTAINERS_PATH -Force
+    Copy-Item "$initrd_root_dir\initrd_artifact\initrd.img" $destination -Force
     if ($LASTEXITCODE) {
-        throw "Cannot copy $initrd_root_dir\initrd_artifact\initrd.img to $LINUX_CONTAINERS_PATH"
+        throw "Cannot copy $initrd_root_dir\initrd_artifact\initrd.img to $destination"
     } else {
-        Write-Host "Initrd artifact copied from $initrd_root_dir\initrd_artifact\initrd.img to $LINUX_CONTAINERS_PATH successfully"
+        Write-Host "Initrd artifact copied from $initrd_root_dir\initrd_artifact\initrd.img to $destination successfully"
     }
 
-    Copy-Item "$initrd_root_dir\bootx64.efi" $LINUX_CONTAINERS_PATH -Force
+    Copy-Item "$initrd_root_dir\bootx64.efi" $destination -Force
     if ($LASTEXITCODE) {
-        throw "Cannot copy $initrd_root_dir\bootx64.efi to $LINUX_CONTAINERS_PATH"
+        throw "Cannot copy $initrd_root_dir\bootx64.efi to $destination"
     } else {
-        Write-Host "bootx64.efi artifact copied from $initrd_root_dir\bootx64.efi to $LINUX_CONTAINERS_PATH successfully"
+        Write-Host "bootx64.efi artifact copied from $initrd_root_dir\bootx64.efi to $destination successfully"
     }
     Write-Host "Artifact copied successfully"
 }
@@ -168,13 +173,35 @@ function Mount-Share {
     }
 }
 
+function Publish-ToPowerBI {
+    param(
+        [String] $DB_CONF_FILE_PATH
+    )
+    cd "${env:WORKSPACE}\scripts\linux_containers_on_windows\db_parser"
+    pip install -r requirements.txt
+
+    Copy-Item -Path "$DB_CONF_FILE_PATH" -Destination .
+
+    python parser.py
+    if ($LASTEXITCODE) {
+        throw "Could not publish test results to PowerBI"
+    } else {
+        Write-Host "Test results published successfully to PowerBI"
+    }
+}
+
+$current_path = (Get-Item -Path ".\" -Verbose).FullName
+$current_path = "$current_path\artifacts"
+
 $mount_path = Mount-Share $SMB_SHARE_PATH $SMB_SHARE_USER $SMB_SHARE_PASS
 Write-Host "Mount point is: $mount_path"
 $artifacts_path = "$mount_path\lcow_builds\"
 Write-Host "Mount path is: $artifacts_path"
 
 Clean-Up $GOPATH_BUILD_DIR
-Copy-Artifacts $artifacts_path
+
+Copy-Artifacts $Artifacts_path $LINUX_CONTAINERS_PATH
+Copy-Artifacts $artifacts_path $current_path
 
 #cd $GOPATH_BUILD_DIR\docker\bundles\
 Register-DockerdService $GOPATH_BUILD_DIR
