@@ -26,10 +26,24 @@ function Clone-Dockerd {
     }
 
     if (Test-Path $path/docker) { Remove-Item -Force -Recurse $path/docker }
-    git clone $repo -b $branch $path\docker
+    try {
+        git clone $repo -b $branch $path\docker
+    } catch {
+        Write-Host "Could not clone docker"
+        Exit 1
+    }
+    Write-Host "docker cloned successfully"
+    
 
     if (Test-Path $path/docker_tests) { Remove-Item -Force -Recurse $path/docker_tests }
-    git clone $tests_repo -b $tests_branch $path\docker_tests
+    try {
+        git clone $tests_repo -b $tests_branch $path\docker_tests
+    } catch {
+        Write-Host "Could not clone docker-tests"
+        Exit 1
+    }
+    Write-Host "docker-tests cloned successfully"
+    
 }
 
 function Build-Dockerd {
@@ -42,12 +56,11 @@ function Build-Dockerd {
     # TODO because of broken patch we need to use and existing client,
     # otherwise use -Binary
     & $path\docker\hack\make.ps1
-    #Remove-Item "$path\docker\bundles\docker.exe"
     cp "C:\docker.exe" "$path\docker\bundles"
 }
 
 $env:GOPATH="$GO_PATH"
-$env:PATH +="C:\tool-chain\bin;"
+$env:PATH +=";C:\tool-chains\bin"
 
 if (-not (Test-Path $GO_PATH)) { Throw "GOPATH could not be found" }
 if (-not (Test-Path $CLONE_PATH)) { Throw "BUILD PATH could not be found" }

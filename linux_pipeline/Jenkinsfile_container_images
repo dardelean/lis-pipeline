@@ -1,12 +1,32 @@
 #!/usr/bin/env groovy
 
 def PowerShellWrapper(psCmd) {
-    bat "powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \"\$ErrorActionPreference='Stop';[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$psCmd;EXIT \$global:LastExitCode\""
+    bat "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \"\$ErrorActionPreference='Stop';[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$psCmd;EXIT \$global:LastExitCode\""
 }
 
 pipeline {
   parameters {
-    string(defaultValue: "stable", description: 'Branch to be built', name: 'KERNEL_GIT_BRANCH')
+    string(defaultValue: "True", description: 'Env cleanup', name: 'CLEAN_ENV')
+    string(defaultValue: "False", description: 'Skip building stages', name: 'SKIP_BUILDING')
+    string(defaultValue: "/smb_azure_share/lcow_builds", description: 'Artifacts smb_share path', name: 'ARTIFACTS_PATH')
+    string(defaultValue: "/mnt/building_dir", description: 'Build path', name: 'BUILD_PATH')
+    string(defaultValue: "/mnt/building_dir/extra_packages/temp", description: 'Extra packages path', name: 'EXTRA_PACKAGE_PATH')
+    string(defaultValue: "24", description: 'Number of cores', name: 'BUILD_THREAD_NUMBER')
+  }
+  environment {
+    KERNEL_GIT_BRANCH = 'master'
+    KERNEL_VERSION = '4.12'
+    OPENGCS_GIT_URL = 'https://github.com/Microsoft/opengcs.git'
+    OPENGCS_GIT_BRANCH = 'master'
+    DOCKER_GIT_REPO = 'https://github.com/moby/moby.git'
+    DOCKER_GIT_BRANCH = 'master'
+    GOPATH_BUILD_DIR = 'C:\\Users\\admin_msft\\go\\src\\github.com\\docker'
+    GO_PATH = 'C:\\Users\\admin_msft\\go'
+    DOCKER_CLIENT_PATH = ';C:\\Users\\admin_msft\\go\\src\\github.com\\docker\\docker\\bundles'
+    DOCKER_TESTS_GIT_REPO = 'https://github.com/dardelean/docker-testing-framework.git'
+    DOCKER_TESTS_GIT_BRANCH = 'master'
+    USE_CCACHE = 'True'
+    CHECKOUT_COMMIT = '6f7da290413ba713f0cdd9ff1a2a9bb129ef4f6c'
   }
 
   options {
@@ -15,14 +35,163 @@ pipeline {
 
   agent {
     node {
-      label 'meta_slave'
+      label 'master'
     }
   }
+
   stages {
-     stage('Noop') {
-       steps {
-         sh 'echo "NOOP"'
-       }
-     }
-  }
+      stage('Prepare Ubuntu build environment') {
+        when {
+          beforeAgent true
+          expression { params.SKIP_BUILDING == 'False' }
+        }
+        agent {
+          node {
+            label 'lcow_ubuntu'
+          }
+        }        
+        steps {
+        withCredentials(bindings: [string(credentialsId: 'KERNEL_GIT_URL', variable: 'KERNEL_GIT_URL')]) {
+          sh '''#!/bin/bash
+            set -xe
+
+            echo "Prepare Ubuntu build environment"
+            pushd "$WORKSPACE/scripts/linux_containers_on_windows/"
+              
+            bash install_deps.sh \\
+            ${KERNEL_GIT_URL} \\
+            ${KERNEL_GIT_BRANCH} \\
+            ${OPENGCS_GIT_URL} \\
+            ${OPENGCS_GIT_BRANCH} \\
+            ${BUILD_PATH} \\
+            ${CLEAN_ENV}
+              
+            popd
+            '''
+            }
+        }
+      }
+    
+
+      stage('Build Linux MSFT Kernel') {
+        when {
+          beforeAgent true
+          expression { params.SKIP_BUILDING == 'False' }
+        }
+        agent {
+          node {
+            label 'lcow_ubuntu'
+          }
+        }        
+        steps {
+          sh '''#!/bin/bash
+            set -xe
+
+            echo "Building LCOW Linux Kernel"
+            pushd "$WORKSPACE/scripts/linux_containers_on_windows/"
+
+            bash build_linux_kernel.sh ${BUILD_PATH} \\
+            ${ARTIFACTS_PATH} \\
+            ${BUILD_THREAD_NUMBER} \\
+            ${KERNEL_VERSION} \\
+            ${CHECKOUT_COMMIT} \\
+            5181302de497cb7d5de37bbc84e01eca676f20d8 b54a12c4e3f18cd48314fd3851f5651446b0e6ee 866488f04fc4d8ff513697db2f80263e90277291 fdd8e16c855a6c7238c654d7217dcf51c5533307 b02ea409f1fceeaac6fd971db5d095ecc903de2d 27e512021e36c67dd1c773a52b23d71896c80602 e2c1d1b8e8d17cc9b423688d59ad486c5f38deca e015b0a767dcab79b8b8361516f3f4322cdc90a7 b9cc90e62104bd001b05d897f84cb7d30d1780bb 022c888e809721a67ecd3072e6331cbdaab45536 81304747d9bcba135c9a9d534f3a3190bca92339 db40d92a09ff6b84b6c47e96d0a8d1cb1f83cd36 0465d97030768485eec5a69a98963e3da7402826 7592de58cbf8d199d721503385c20a02743425a9 02d07a9dcdb042f33248fd3aeb1e5c2eca6d3d49 f315dfcf9c3b4b32f43a21664762cbacd8f05d6a d6f7158fdbac10f9935a506451e3d54d2d50a7c7 c15d7f606f813b8d1f1ce02979929fd875da228b b6ffb4393fb266711b37ed056487665d8650f31a
+            popd
+            '''
+        }
+      }
+
+      stage('Build OPENGCS tools') {
+        when {
+          beforeAgent true
+          expression { params.SKIP_BUILDING == 'False' }
+        }
+        agent {
+          node {
+            label 'lcow_ubuntu'
+          }
+        }        
+        steps {
+          sh '''#!/bin/bash
+            set -xe
+
+            echo "Building opengcs tool and injecting them int othe LCOW Linux kernel"
+            pushd "$WORKSPACE/scripts/linux_containers_on_windows/"
+
+            bash build_opengcs_tools.sh ${BUILD_PATH} \\
+            ${ARTIFACTS_PATH} \\
+            ${BUILD_THREAD_NUMBER}
+            popd
+            '''
+        }
+      }
+
+      stage('Generate kernel initrd') {
+        when {
+          beforeAgent true
+          expression { params.SKIP_BUILDING == 'False' }
+        }
+        agent {
+          node {
+            label 'lcow_ubuntu'
+          }
+        }        
+        steps {
+          sh '''#!/bin/bash
+            set -xe
+
+            echo "Generating the Kernel initrd with opengcs injected"
+            pushd "$WORKSPACE/scripts/linux_containers_on_windows/"
+
+            bash generate_kernel_initrd.sh ${ARTIFACTS_PATH} \\
+            ${EXTRA_PACKAGE_PATH} \\
+            ${BUILD_PATH} \\
+            ${KERNEL_VERSION} \\
+            ${CLEAN_ENV}
+            popd
+            '''
+        }
+      }
+
+      stage('Build dockerd daemon') {
+        agent {
+          node {
+            label 'lcow_windows_rs3'
+          }
+        }        
+        steps {
+            echo 'Building dockerd daemon'
+            PowerShellWrapper('& ".\\scripts\\linux_containers_on_windows\\build_dockerd.ps1 "${env:DOCKER_GIT_REPO}" "${env:DOCKER_GIT_BRANCH}" "${env:GOPATH_BUILD_DIR}" "${env:GO_PATH}" "${env:DOCKER_TESTS_GIT_REPO}" "${env:DOCKER_TESTS_GIT_BRANCH}"')
+            echo 'Finished building dockerd daemon'
+        }
+      }
+
+      stage('Run Docker tests') {
+        agent {
+          node {
+            label 'lcow_windows_rs3'
+          }
+        }        
+        steps {
+          withCredentials(bindings: [string(credentialsId: 'SMB_SHARE_PATH', variable: 'SMB_SHARE_PATH'),
+                                     file(credentialsId: 'DB_CONF', variable: 'DB_CONF'),
+                                     usernamePassword(credentialsId: 'SMB_SHARE_USER_PASS',
+                                                      passwordVariable: 'PASSWORD',
+                                                      usernameVariable: 'USERNAME')]) {
+            echo 'Running Docker tests'
+            PowerShellWrapper('& ".\\scripts\\linux_containers_on_windows\\run_docker_tests.ps1 "${env:GOPATH_BUILD_DIR}" "${env:DOCKER_TESTS_GIT_REPO}" "${env:DOCKER_TESTS_GIT_BRANCH}" "${env:SMB_SHARE_PATH}" "${env:USERNAME}" "${env:PASSWORD}" "${env:DOCKER_CLIENT_PATH}" "${env:DB_CONF}"')
+            echo 'Finished running Docker tests'
+          }
+        }
+        post {
+          always {
+            archiveArtifacts 'results\\*'
+          }
+          success {
+            echo 'Cleaning up the environment...'
+            PowerShellWrapper('Remove-Item results -Force -Recurse')
+          }
+        }
+      }
+    }
 }
