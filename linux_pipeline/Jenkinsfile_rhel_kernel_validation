@@ -1,0 +1,75 @@
+#!/usr/bin/env groovy
+
+def PowerShellWrapper(psCmd) {
+    psCmd = psCmd.replaceAll("\r", "").replaceAll("\n", "")
+    bat "powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \"\$ErrorActionPreference='Stop';[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$psCmd;EXIT \$global:LastExitCode\""
+}
+
+pipeline {
+  options {
+    buildDiscarder(logRotator(numToKeepStr: '1000'))
+    overrideIndexTriggers(false)
+  }
+  environment {
+    OS_TYPE = "rhel"
+    KERNEL_ARTIFACTS_PATH = 'upstream-kernel-artifacts'
+    UBUNTU_VERSION = '16'
+    BUILD_PATH = '/mnt/tmp/upstream-kernel-build-folder'
+    KERNEL_CONFIG = 'Microsoft/config-azure'
+    CLEAN_ENV = 'True'
+    USE_CCACHE = 'True'
+    AZURE_MAX_RETRIES = '60'
+    BUILD_NAME = 'u'
+    CREATE_CHANGELOG = 'False'
+    INSTALL_DEPS = 'True'
+    USE_KERNEL_FOLDER_PREFIX = 'True'
+  }
+  agent {
+    node {
+      label 'master'
+    }
+  }
+
+  stages {
+      stage('check_for_new_kernel') {
+        agent {
+          node {
+            label 'monitor-hyperv'
+          }
+        }        
+        steps {
+            withCredentials(bindings: [string(credentialsId: 'redhat_kernels_file', variable: 'REDHAT_KERNELS_FILE'),
+                                       string(credentialsId: 'utils_dir', variable: 'UTILS_DIR')]) {
+            echo 'Cheking if there is a new kernel version'
+            PowerShellWrapper('''
+                & ".\\scripts\\rhel_kernel_validation\\take_kernel_version.ps1
+                    -UtilsDir "${env:UTILS_DIR}"
+                    -LatestVersionFile "${env:REDHAT_KERNELS_FILE}"
+            ''')
+            stash includes: 'kernel_version.txt', name: 'kernel_version.txt'
+            echo 'Kernel versions checked'
+            }
+        } 
+    }
+
+    stage('boot_test') {
+      agent {
+        node {
+          label 'meta_slave'
+        }
+      }
+      steps {
+          dir('kernel_version' + env.BUILD_NUMBER + env.BRANCH_NAME) {
+            unstash 'kernel_version.txt'
+            sh 'cat kernel_version.txt' 
+          } 
+          sh '''
+            bash scripts/rhel_kernel_validation/boot_azure_vm_validation.sh \
+                --build_name $BUILD_NAME --build_number "${BUILD_NUMBER}${BRANCH_NAME}" \
+                --vm_user_name $OS_TYPE \
+                --os_type $OS_TYPE
+            '''
+        }
+      }
+    }
+  }
